@@ -87,7 +87,7 @@ public class ProjectionCrystalItem extends Item {
     @Override
     public InteractionResult useOn(UseOnContext context) {
         ItemStack stack = context.getItemInHand();
-        if (hasCapture(stack)) {
+        if (hasCompleteCapture(stack)) {
             context.getPlayer().startUsingItem(context.getHand());
             if (!context.getLevel().isClientSide()) {
                 tell(context, "item.itemstructures.projection_crystal.hold_to_clear");
@@ -118,6 +118,16 @@ public class ProjectionCrystalItem extends Item {
             if (!isInside(clicked, first, second)) {
                 context.getPlayer().displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "item.itemstructures.projection_crystal.center_inside"), true);
+                return InteractionResult.FAIL;
+            }
+            long width = (long) Math.abs((long) first.getX() - second.getX()) + 1L;
+            long height = (long) Math.abs((long) first.getY() - second.getY()) + 1L;
+            long depth = (long) Math.abs((long) first.getZ() - second.getZ()) + 1L;
+            if (width > ProjectionManager.MAX_BLOCKS
+                    || height > ProjectionManager.MAX_BLOCKS / width
+                    || width * height > ProjectionManager.MAX_BLOCKS / depth) {
+                context.getPlayer().displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "item.itemstructures.projection_crystal.too_large"), true);
                 return InteractionResult.FAIL;
             }
             data.put(CENTER, NbtUtils.writeBlockPos(clicked));
@@ -181,15 +191,19 @@ public class ProjectionCrystalItem extends Item {
         }
         ListTag entries = readBlocks(data);
         if (entries == null) {
-            clearCapture(stack);
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
-                    "item.itemstructures.projection_crystal.too_large"), true);
+                    "item.itemstructures.projection_crystal.invalid_data"), true);
             return;
         }
         ProjectionManager.toggle(player, entries);
     }
 
     public static boolean hasCapture(ItemStack stack) {
+        CompoundTag data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
+        return data.contains(CORNER_ONE) || data.contains(CORNER_TWO) || data.contains(CENTER);
+    }
+
+    private static boolean hasCompleteCapture(ItemStack stack) {
         CompoundTag data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
         return data.contains(CENTER) && (data.contains(BLOCKS) || data.contains(COMPRESSED_BLOCKS));
     }

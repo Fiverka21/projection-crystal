@@ -8,6 +8,7 @@ import java.util.UUID;
 import org.joml.Vector3f;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderGetter;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -15,6 +16,7 @@ import net.minecraft.nbt.NbtUtils;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.resources.ResourceKey;
@@ -27,6 +29,8 @@ import net.minecraft.world.level.block.state.BlockState;
 final class ProjectionManager {
     private static final long LIFETIME_TICKS = 5 * 60 * 20L;
     private static final long CHARGE_TICKS = 8 * 20L;
+    private static final int PREPARE_BLOCKS_PER_TICK = 4_096;
+    static final long MAX_BLOCKS = 20L * ProjectionCrystalItem.MAX_BLOCKS_PER_TICK;
     private static final Map<UUID, ActiveProjection> ACTIVE = new HashMap<>();
     private static final Map<UUID, PendingProjection> CHARGING = new HashMap<>();
     private static final Map<UUID, Placement> PLACING = new HashMap<>();
@@ -39,6 +43,8 @@ final class ProjectionManager {
         ProjectionSavedData data = overworld.getDataStorage().computeIfAbsent(
                 ProjectionSavedData.factory(), ProjectionSavedData.NAME);
         ACTIVE.clear();
+        CHARGING.clear();
+        PLACING.clear();
         for (int i = 0; i < data.projections().size(); i++) {
             CompoundTag saved = data.projections().getCompound(i);
             try {
@@ -60,8 +66,9 @@ final class ProjectionManager {
                 }
                 if (!blocks.isEmpty()) {
                     ServerPlayer player = overworld.getServer().getPlayerList().getPlayer(owner);
+                    BlockPos center = NbtUtils.readBlockPos(saved, "Center").orElse(null);
                     ACTIVE.put(owner, new ActiveProjection(owner, player, level, blocks,
-                            saved.getLong("ExpiresAt")));
+                            center, saved.getLong("ExpiresAt")));
                 }
             } catch (RuntimeException ignored) {
                 // Ignore malformed saved projections rather than preventing the world from loading.
@@ -83,18 +90,16 @@ final class ProjectionManager {
         Placement placement = PLACING.get(playerId);
         if (placement != null) {
             cancelPlacement(player, playerId, placement);
-            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
-                    "item.itemstructures.projection_crystal.charge_cancelled"), true);
             return;
         }
         if (CHARGING.remove(playerId) != null) {
             stopChargingSound(player);
-            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
-                    "item.itemstructures.projection_crystal.charge_cancelled"), true);
             return;
         }
         BlockPos center = player.blockPosition().below();
-        ListTag storedEntries = new ListTag();
+        // The caller already passes a detached list from the item's copied NBT.
+        // Keeping it directly avoids duplicating every block entry during charging.
+        ListTag storedEntries = entries;
         int minX = Integer.MAX_VALUE;
         int minY = Integer.MAX_VALUE;
         int minZ = Integer.MAX_VALUE;
@@ -102,8 +107,7 @@ final class ProjectionManager {
         int maxY = Integer.MIN_VALUE;
         int maxZ = Integer.MIN_VALUE;
         for (int i = 0; i < entries.size(); i++) {
-            CompoundTag entry = entries.getCompound(i).copy();
-            storedEntries.add(entry);
+            CompoundTag entry = entries.getCompound(i);
             minX = Math.min(minX, entry.getInt("x"));
             minY = Math.min(minY, entry.getInt("y"));
             minZ = Math.min(minZ, entry.getInt("z"));
@@ -126,22 +130,24 @@ final class ProjectionManager {
     }
 
     static boolean isProjected(Level level, BlockPos pos) {
-        return ACTIVE.values().stream().anyMatch(projection ->
-                projection.level == level && projection.blocks.containsKey(pos))
-                || PLACING.values().stream().anyMatch(placement ->
-                placement.level == level && placement.blocks.containsKey(pos));
+        for (ActiveProjection projection : ACTIVE.values()) {
+            if (projection.level == level && projection.blocks.containsKey(pos)) return true;
+        }
+        for (Placement placement : PLACING.values()) {
+            if (placement.level == level && placement.blocks.containsKey(pos)) return true;
+        }
+        return false;
     }
 
     static void destroyProjected(ServerPlayer player, BlockPos pos) {
         ActiveProjection active = ACTIVE.get(player.getUUID());
         if (active != null && active.level == player.level() && active.blocks.containsKey(pos)) {
+            if (pos.equals(active.center)) return;
             restore(active.level, pos, active.blocks.remove(pos));
             if (active.blocks.isEmpty()) {
                 ACTIVE.remove(player.getUUID());
-                save(player.serverLevel().getServer());
-            } else {
-                save(player.serverLevel().getServer());
             }
+            save(player.serverLevel().getServer());
             return;
         }
         Placement placement = PLACING.get(player.getUUID());
@@ -150,10 +156,13 @@ final class ProjectionManager {
         }
     }
 
-    static void tick(long gameTime) {
+    static void tick(MinecraftServer server) {
+        long gameTime = server.overworld().getGameTime();
+        boolean changed = false;
         Iterator<Map.Entry<UUID, PendingProjection>> charging = CHARGING.entrySet().iterator();
         while (charging.hasNext()) {
             PendingProjection pending = charging.next().getValue();
+            pending.prepareNext();
             spawnParticles(pending);
             if (gameTime >= pending.readyAt) {
                 charging.remove();
@@ -169,19 +178,21 @@ final class ProjectionManager {
                 placing.remove();
                 ACTIVE.put(entry.getKey(), new ActiveProjection(entry.getKey(), placement.player,
                         placement.level, placement.blocks,
-                        placement.level.getGameTime() + LIFETIME_TICKS));
-                save(placement.level.getServer());
+                        placement.center, placement.level.getGameTime() + LIFETIME_TICKS));
+                changed = true;
             }
         }
 
-        ACTIVE.values().removeIf(projection -> {
+        Iterator<Map.Entry<UUID, ActiveProjection>> active = ACTIVE.entrySet().iterator();
+        while (active.hasNext()) {
+            ActiveProjection projection = active.next().getValue();
             if (gameTime >= projection.expiresAt) {
                 projection.blocks.forEach((pos, original) -> restore(projection.level, pos, original));
-                save(projection.level.getServer());
-                return true;
+                active.remove();
+                changed = true;
             }
-            return false;
-        });
+        }
+        if (changed) save(server);
     }
 
     private static boolean placeNext(Placement placement) {
@@ -190,8 +201,13 @@ final class ProjectionManager {
         for (int i = placement.nextIndex; i < end; i++) {
             CompoundTag entry = placement.entries.getCompound(i);
             BlockPos pos = placement.center.offset(entry.getInt("x"), entry.getInt("y"), entry.getInt("z"));
-            BlockState state = NbtUtils.readBlockState(placement.level.holderLookup(
-                    net.minecraft.core.registries.Registries.BLOCK), entry.getCompound("state"));
+            BlockState state = placement.preparedStates[i];
+            if (state == null) {
+                // This is only a fallback for unusually large structures whose preparation
+                // did not finish during the charge window.
+                state = NbtUtils.readBlockState(placement.blockRegistries,
+                        entry.getCompound("state"));
+            }
             placement.blocks.put(pos, new OriginalBlock(placement.level.getBlockState(pos),
                     saveBlockEntity(placement.level, pos)));
             placement.level.setBlock(pos, state, Block.UPDATE_CLIENTS);
@@ -275,6 +291,7 @@ final class ProjectionManager {
             CompoundTag saved = new CompoundTag();
             saved.putUUID("Owner", active.owner);
             saved.putString("Dimension", active.level.dimension().location().toString());
+            if (active.center != null) saved.put("Center", NbtUtils.writeBlockPos(active.center));
             saved.putLong("ExpiresAt", active.expiresAt);
             ListTag blocks = new ListTag();
             active.blocks.forEach((pos, original) -> {
@@ -291,21 +308,63 @@ final class ProjectionManager {
     }
 
     private record OriginalBlock(BlockState state, CompoundTag blockEntity) {}
-    private record PendingProjection(ServerPlayer player, ListTag entries, BlockPos center,
-            int minX, int minY, int minZ, int maxX, int maxY, int maxZ, long readyAt) {}
+    private static final class PendingProjection {
+        private final ServerPlayer player;
+        private final ListTag entries;
+        private final BlockPos center;
+        private final int minX;
+        private final int minY;
+        private final int minZ;
+        private final int maxX;
+        private final int maxY;
+        private final int maxZ;
+        private final long readyAt;
+        private final HolderGetter<Block> blockRegistries;
+        private final BlockState[] preparedStates;
+        private int preparedCount;
+
+        private PendingProjection(ServerPlayer player, ListTag entries, BlockPos center,
+                int minX, int minY, int minZ, int maxX, int maxY, int maxZ, long readyAt) {
+            this.player = player;
+            this.entries = entries;
+            this.center = center;
+            this.minX = minX;
+            this.minY = minY;
+            this.minZ = minZ;
+            this.maxX = maxX;
+            this.maxY = maxY;
+            this.maxZ = maxZ;
+            this.readyAt = readyAt;
+            this.blockRegistries = player.serverLevel().holderLookup(
+                    net.minecraft.core.registries.Registries.BLOCK);
+            this.preparedStates = new BlockState[entries.size()];
+        }
+
+        private void prepareNext() {
+            if (preparedCount >= entries.size()) return;
+            int end = Math.min(entries.size(), preparedCount + PREPARE_BLOCKS_PER_TICK);
+            while (preparedCount < end) {
+                preparedStates[preparedCount] = NbtUtils.readBlockState(blockRegistries,
+                        entries.getCompound(preparedCount).getCompound("state"));
+                preparedCount++;
+            }
+        }
+    }
     private static final class ActiveProjection {
         private final UUID owner;
         private ServerPlayer player;
         private final ServerLevel level;
         private final Map<BlockPos, OriginalBlock> blocks;
+        private final BlockPos center;
         private final long expiresAt;
 
         private ActiveProjection(UUID owner, ServerPlayer player, ServerLevel level,
-                Map<BlockPos, OriginalBlock> blocks, long expiresAt) {
+                Map<BlockPos, OriginalBlock> blocks, BlockPos center, long expiresAt) {
             this.owner = owner;
             this.player = player;
             this.level = level;
             this.blocks = blocks;
+            this.center = center;
             this.expiresAt = expiresAt;
         }
     }
@@ -315,6 +374,8 @@ final class ProjectionManager {
         private final ServerLevel level;
         private final ListTag entries;
         private final BlockPos center;
+        private final HolderGetter<Block> blockRegistries;
+        private final BlockState[] preparedStates;
         private final Map<BlockPos, OriginalBlock> blocks = new HashMap<>();
         private int nextIndex;
 
@@ -323,6 +384,8 @@ final class ProjectionManager {
             this.level = pending.player.serverLevel();
             this.entries = pending.entries;
             this.center = pending.center;
+            this.blockRegistries = level.holderLookup(net.minecraft.core.registries.Registries.BLOCK);
+            this.preparedStates = pending.preparedStates;
         }
     }
 }

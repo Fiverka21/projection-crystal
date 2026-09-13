@@ -149,7 +149,7 @@ public class ItemStructures {
 
     @SubscribeEvent
     public void onServerTick(ServerTickEvent.Post event) {
-        ProjectionManager.tick(event.getServer().overworld().getGameTime());
+        ProjectionManager.tick(event.getServer());
     }
 
     @SubscribeEvent
