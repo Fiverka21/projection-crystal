@@ -1,0 +1,31 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# NeoForge/Minecraft run directory (generated at runtime, not source)
+run/
+
+# IDE
+.idea/
+*.iml
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+bin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local Gradle/env overrides that shouldn't be shared
+gradle.properties.local
+local.properties
+
+# Eclipse/other build tool artifacts
+.factorypath

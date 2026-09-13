@@ -1,0 +1,22 @@
+{
+  "itemGroup.itemstructures": "Item Structures",
+  "block.itemstructures.example_block": "Example Block",
+  "item.itemstructures.projection_crystal": "Projection Crystal",
+  "item.itemstructures.projection_crystal.corner_one": "First corner selected",
+  "item.itemstructures.projection_crystal.corner_two": "Second corner selected",
+  "item.itemstructures.projection_crystal.center_inside": "The center block must be inside the selected area",
+  "item.itemstructures.projection_crystal.ready": "Structure captured; left-click to project it",
+  "item.itemstructures.projection_crystal.already_set": "This crystal already contains a structure",
+  "item.itemstructures.projection_crystal.not_ready": "Select two corners and a center block first",
+  "item.itemstructures.projection_crystal.projected": "Structure projected for five minutes",
+  "item.itemstructures.projection_crystal.cleared": "Stored structure cleared",
+  "item.itemstructures.projection_crystal.hold_to_clear": "Keep right-click held for four seconds to clear the structure",
+
+  "itemstructures.configuration.title": "Item Structures Configs",
+  "itemstructures.configuration.section.itemstructures.common.toml": "Item Structures Configs",
+  "itemstructures.configuration.section.itemstructures.common.toml.title": "Item Structures Configs",
+  "itemstructures.configuration.items": "Item List",
+  "itemstructures.configuration.logDirtBlock": "Log Dirt Block",
+  "itemstructures.configuration.magicNumberIntroduction": "Magic Number Text",
+  "itemstructures.configuration.magicNumber": "Magic Number"
+}
