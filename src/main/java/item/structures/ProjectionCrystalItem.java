@@ -1,9 +1,15 @@
 package item.structures;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtAccounter;
+import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtUtils;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.item.Item;
@@ -15,14 +21,35 @@ import net.minecraft.world.level.block.state.BlockState;
 
 /** An item which stores a cuboid of block states and projects it around the player. */
 public class ProjectionCrystalItem extends Item {
+    private static final long MAX_CAPTURE_BLOCKS = 65_536L;
+    private static final int MAX_COMPRESSED_BYTES = 1_500_000;
+    private static final long MAX_DECOMPRESSED_NBT_BYTES = 32_000_000L;
     private static final int CLEAR_HOLD_TICKS = 4 * 20;
     private static final String CORNER_ONE = "CornerOne";
     private static final String CORNER_TWO = "CornerTwo";
     private static final String CENTER = "Center";
     private static final String BLOCKS = "Blocks";
+    private static final String COMPRESSED_BLOCKS = "CompressedBlocks";
 
     public ProjectionCrystalItem(Properties properties) {
         super(properties.stacksTo(1));
+    }
+
+    @Override
+    public void verifyComponentsAfterLoad(ItemStack stack) {
+        super.verifyComponentsAfterLoad(stack);
+        CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+        if (customData != null) {
+            CompoundTag data = customData.copyTag();
+            boolean oldFormatTooLarge = data.contains(BLOCKS)
+                    && data.getList(BLOCKS, CompoundTag.TAG_COMPOUND).size() > MAX_CAPTURE_BLOCKS;
+            boolean compressedFormatTooLarge = data.contains(COMPRESSED_BLOCKS)
+                    && data.getByteArray(COMPRESSED_BLOCKS).length > MAX_COMPRESSED_BYTES;
+            boolean networkPayloadTooLarge = data.sizeInBytes() > MAX_COMPRESSED_BYTES;
+            if (oldFormatTooLarge || compressedFormatTooLarge || networkPayloadTooLarge) {
+                clearCapture(stack);
+            }
+        }
     }
 
     @Override
@@ -107,9 +134,32 @@ public class ProjectionCrystalItem extends Item {
                         "item.itemstructures.projection_crystal.center_inside"), true);
                 return InteractionResult.FAIL;
             }
+            long volume = (Math.abs((long) first.getX() - second.getX()) + 1L)
+                    * (Math.abs((long) first.getY() - second.getY()) + 1L)
+                    * (Math.abs((long) first.getZ() - second.getZ()) + 1L);
+            if (volume > MAX_CAPTURE_BLOCKS) {
+                context.getPlayer().displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "item.itemstructures.projection_crystal.too_large"), true);
+                return InteractionResult.FAIL;
+            }
 
             data.put(CENTER, NbtUtils.writeBlockPos(clicked));
-            data.put(BLOCKS, capture(context, first, second, clicked));
+            ListTag captured = capture(context, first, second, clicked);
+            byte[] compressed;
+            try {
+                compressed = compress(captured);
+            } catch (IOException exception) {
+                context.getPlayer().displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "item.itemstructures.projection_crystal.too_large"), true);
+                return InteractionResult.FAIL;
+            }
+            if (compressed.length > MAX_COMPRESSED_BYTES) {
+                context.getPlayer().displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "item.itemstructures.projection_crystal.too_large"), true);
+                return InteractionResult.FAIL;
+            }
+            data.putByteArray(COMPRESSED_BLOCKS, compressed);
+            data.remove(BLOCKS);
             save(stack, data);
             tell(context, "item.itemstructures.projection_crystal.ready");
             return InteractionResult.SUCCESS;
@@ -152,21 +202,54 @@ public class ProjectionCrystalItem extends Item {
 
     public static void project(ItemStack stack, net.minecraft.server.level.ServerPlayer player) {
         CompoundTag data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
-        if (!data.contains(BLOCKS) || !data.contains(CENTER)) {
+        if ((!data.contains(BLOCKS) && !data.contains(COMPRESSED_BLOCKS)) || !data.contains(CENTER)) {
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "item.itemstructures.projection_crystal.not_ready"), true);
             return;
         }
-        ProjectionManager.toggle(player, data.getList(BLOCKS, CompoundTag.TAG_COMPOUND));
+        ListTag entries = readBlocks(data);
+        if (entries == null) {
+            clearCapture(stack);
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "item.itemstructures.projection_crystal.too_large"), true);
+            return;
+        }
+        ProjectionManager.toggle(player, entries);
     }
 
     public static boolean hasCapture(ItemStack stack) {
         CompoundTag data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
-        return data.contains(CENTER) && data.contains(BLOCKS);
+        return data.contains(CENTER) && (data.contains(BLOCKS) || data.contains(COMPRESSED_BLOCKS));
     }
 
     public static void clearCapture(ItemStack stack) {
         stack.remove(DataComponents.CUSTOM_DATA);
+    }
+
+    private static byte[] compress(ListTag blocks) throws IOException {
+        CompoundTag root = new CompoundTag();
+        root.put(BLOCKS, blocks);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        NbtIo.writeCompressed(root, output);
+        return output.toByteArray();
+    }
+
+    private static ListTag readBlocks(CompoundTag data) {
+        if (data.contains(BLOCKS)) {
+            return data.getList(BLOCKS, CompoundTag.TAG_COMPOUND);
+        }
+        byte[] compressed = data.getByteArray(COMPRESSED_BLOCKS);
+        if (compressed.length == 0 || compressed.length > MAX_COMPRESSED_BYTES) {
+            return null;
+        }
+        try {
+            CompoundTag root = NbtIo.readCompressed(new ByteArrayInputStream(compressed),
+                    NbtAccounter.create(MAX_DECOMPRESSED_NBT_BYTES));
+            ListTag blocks = root.getList(BLOCKS, CompoundTag.TAG_COMPOUND);
+            return blocks.size() > MAX_CAPTURE_BLOCKS ? null : blocks;
+        } catch (IOException | RuntimeException exception) {
+            return null;
+        }
     }
 
     private static boolean isInside(BlockPos pos, BlockPos first, BlockPos second) {

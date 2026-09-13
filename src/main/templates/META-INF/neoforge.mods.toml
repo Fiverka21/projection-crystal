@@ -46,7 +46,7 @@ authors="coding: Fiverka"
 
 # The description text for the mod (multi line!) (#mandatory)
 description='''
-Example mod description.
+Adds the Projection Crystal, a tool for capturing and temporarily projecting structures.
 '''
 
 # The [[mixins]] block allows you to declare your mixin config to FML so that it gets loaded.
