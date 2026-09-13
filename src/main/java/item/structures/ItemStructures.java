@@ -27,6 +27,8 @@ import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.neoforged.neoforge.event.level.BlockDropsEvent;
+import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.registries.DeferredBlock;
@@ -149,6 +151,22 @@ public class ItemStructures {
         }
         handleProjectionLeftClick(player);
         event.setCanceled(true);
+    }
+
+    @SubscribeEvent
+    public void onProjectedBlockBreak(BlockEvent.BreakEvent event) {
+        if (event.getPlayer() instanceof net.minecraft.server.level.ServerPlayer player
+                && ProjectionManager.isProjected(player, event.getPos())) {
+            ProjectionManager.destroyProjected(player, event.getPos());
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
+    public void onProjectedBlockDrops(BlockDropsEvent event) {
+        if (ProjectionManager.isProjected(event.getLevel(), event.getPos())) {
+            event.setCanceled(true);
+        }
     }
 
     private static void handleProjectionLeftClick(net.minecraft.server.level.ServerPlayer player) {

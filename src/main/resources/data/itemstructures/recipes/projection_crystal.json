@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "LDL",
+    "DND",
+    "LDL"
+  ],
+  "key": {
+    "L": "minecraft:lapis_lazuli",
+    "D": "minecraft:diamond",
+    "N": "minecraft:nether_star"
+  },
+  "result": {
+    "id": "itemstructures:projection_crystal",
+    "count": 1
+  }
+}

@@ -5,7 +5,7 @@
   "item.itemstructures.projection_crystal.corner_one": "First corner selected",
   "item.itemstructures.projection_crystal.corner_two": "Second corner selected",
   "item.itemstructures.projection_crystal.center_inside": "The center block must be inside the selected area",
-  "item.itemstructures.projection_crystal.ready": "Structure captured; left-click to project it",
+  "item.itemstructures.projection_crystal.ready": "Structure captured",
   "item.itemstructures.projection_crystal.already_set": "This crystal already contains a structure",
   "item.itemstructures.projection_crystal.not_ready": "Select two corners and a center block first",
   "item.itemstructures.projection_crystal.projected": "Structure projected for five minutes",

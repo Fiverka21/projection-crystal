@@ -9,6 +9,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtUtils;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -49,6 +50,11 @@ final class ProjectionManager {
     static boolean isProjected(ServerPlayer player, BlockPos pos) {
         ActiveProjection projection = ACTIVE.get(player.getUUID());
         return projection != null && projection.blocks.containsKey(pos);
+    }
+
+    static boolean isProjected(Level level, BlockPos pos) {
+        return ACTIVE.values().stream().anyMatch(projection ->
+                projection.player.level() == level && projection.blocks.containsKey(pos));
     }
 
     static void destroyProjected(ServerPlayer player, BlockPos pos) {
