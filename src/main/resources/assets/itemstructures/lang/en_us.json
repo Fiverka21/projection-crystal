@@ -7,7 +7,7 @@
   "item.itemstructures.projection_crystal.ready": "Structure captured",
   "item.itemstructures.projection_crystal.already_set": "This crystal already contains a structure",
   "item.itemstructures.projection_crystal.not_ready": "Select two corners and a center block first",
-  "item.itemstructures.projection_crystal.too_large": "That structure is too large; maximum size is 65,536 blocks",
+  "item.itemstructures.projection_crystal.too_large": "That structure is too large for the crystal's storage limit",
   "item.itemstructures.projection_crystal.cleared": "Stored structure cleared",
   "item.itemstructures.projection_crystal.hold_to_clear": "Keep right-click held for four seconds to clear the structure"
 }

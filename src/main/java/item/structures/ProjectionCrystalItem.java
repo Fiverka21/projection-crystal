@@ -21,9 +21,7 @@ import net.minecraft.world.level.block.state.BlockState;
 
 /** An item which stores a cuboid of block states and projects it around the player. */
 public class ProjectionCrystalItem extends Item {
-    private static final long MAX_CAPTURE_BLOCKS = 65_536L;
-    private static final int MAX_COMPRESSED_BYTES = 1_500_000;
-    private static final long MAX_DECOMPRESSED_NBT_BYTES = 32_000_000L;
+    static final long MAX_BLOCKS_PER_TICK = 65_536L;
     private static final int CLEAR_HOLD_TICKS = 4 * 20;
     private static final String CORNER_ONE = "CornerOne";
     private static final String CORNER_TWO = "CornerTwo";
@@ -38,18 +36,6 @@ public class ProjectionCrystalItem extends Item {
     @Override
     public void verifyComponentsAfterLoad(ItemStack stack) {
         super.verifyComponentsAfterLoad(stack);
-        CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
-        if (customData != null) {
-            CompoundTag data = customData.copyTag();
-            boolean oldFormatTooLarge = data.contains(BLOCKS)
-                    && data.getList(BLOCKS, CompoundTag.TAG_COMPOUND).size() > MAX_CAPTURE_BLOCKS;
-            boolean compressedFormatTooLarge = data.contains(COMPRESSED_BLOCKS)
-                    && data.getByteArray(COMPRESSED_BLOCKS).length > MAX_COMPRESSED_BYTES;
-            boolean networkPayloadTooLarge = data.sizeInBytes() > MAX_COMPRESSED_BYTES;
-            if (oldFormatTooLarge || compressedFormatTooLarge || networkPayloadTooLarge) {
-                clearCapture(stack);
-            }
-        }
     }
 
     @Override
@@ -134,26 +120,12 @@ public class ProjectionCrystalItem extends Item {
                         "item.itemstructures.projection_crystal.center_inside"), true);
                 return InteractionResult.FAIL;
             }
-            long volume = (Math.abs((long) first.getX() - second.getX()) + 1L)
-                    * (Math.abs((long) first.getY() - second.getY()) + 1L)
-                    * (Math.abs((long) first.getZ() - second.getZ()) + 1L);
-            if (volume > MAX_CAPTURE_BLOCKS) {
-                context.getPlayer().displayClientMessage(net.minecraft.network.chat.Component.translatable(
-                        "item.itemstructures.projection_crystal.too_large"), true);
-                return InteractionResult.FAIL;
-            }
-
             data.put(CENTER, NbtUtils.writeBlockPos(clicked));
             ListTag captured = capture(context, first, second, clicked);
             byte[] compressed;
             try {
                 compressed = compress(captured);
             } catch (IOException exception) {
-                context.getPlayer().displayClientMessage(net.minecraft.network.chat.Component.translatable(
-                        "item.itemstructures.projection_crystal.too_large"), true);
-                return InteractionResult.FAIL;
-            }
-            if (compressed.length > MAX_COMPRESSED_BYTES) {
                 context.getPlayer().displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "item.itemstructures.projection_crystal.too_large"), true);
                 return InteractionResult.FAIL;
@@ -239,14 +211,14 @@ public class ProjectionCrystalItem extends Item {
             return data.getList(BLOCKS, CompoundTag.TAG_COMPOUND);
         }
         byte[] compressed = data.getByteArray(COMPRESSED_BLOCKS);
-        if (compressed.length == 0 || compressed.length > MAX_COMPRESSED_BYTES) {
+        if (compressed.length == 0) {
             return null;
         }
         try {
             CompoundTag root = NbtIo.readCompressed(new ByteArrayInputStream(compressed),
-                    NbtAccounter.create(MAX_DECOMPRESSED_NBT_BYTES));
+                    NbtAccounter.unlimitedHeap());
             ListTag blocks = root.getList(BLOCKS, CompoundTag.TAG_COMPOUND);
-            return blocks.size() > MAX_CAPTURE_BLOCKS ? null : blocks;
+            return blocks;
         } catch (IOException | RuntimeException exception) {
             return null;
         }
